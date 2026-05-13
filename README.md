@@ -1,184 +1,175 @@
-# paper-polish
+# Paper Auto-Review
 
-An AI-assisted academic paper revision toolkit built on Claude Code. Drop your paper in, run a slash command, get structured reviews, targeted revisions, and publication-ready figures — all without leaving the terminal.
+An automated paper-review-and-revision pipeline built as a set of Claude Code skills. Drop in a `.tex` / `.pdf` / `.zip` and get back reviewer scores, a revised paper, and a clean change log — without leaving the editor.
 
----
-
-## Quick Start
-
-```bash
-# 1. Put your paper in the paper/ directory
-cp your_paper.tex paper/main.tex   # or paper.pdf
-
-# 2. Open Claude Code in this directory
-claude
-
-# 3. Run the full review loop (recommended)
-/review-loop
-```
-
-That's it. The loop will review, revise, and re-review until the score threshold is met or 3 rounds are exhausted.
+[中文版本](./README_CN.md)
 
 ---
+
+## What it does
+
+Given an academic CS/AI paper, it:
+
+1. Runs three independent reviewer agents in parallel (Motivation, Experiments, Writing) plus an Area Chair to aggregate scores.
+2. Revises the paper based on those reviews — text, figures, and missing experiments are each handled by a dedicated skill.
+3. Loops review → revise → re-review until the overall score crosses a threshold or rounds run out, with automatic rollback if a revision lowers the score.
+4. Emits **three** clean files at the end. All intermediate artifacts are tucked into a hidden `.auto-review/` folder.
 
 ## Skills
 
-### `/paper-reviewer` — Multi-agent review
-Simulates a three-reviewer + area chair panel from NeurIPS / ICML / ICLR.
+| Skill | Role | Invocation |
+|---|---|---|
+| `paper-reviewer` | 3 reviewers + AC, produces scores and revision priorities | `/paper-reviewer paper.pdf` |
+| `writing-reviser` | Text revision; flags items needing author action | (called by `review-loop`) |
+| `figure-advisor` | Improves figures, regenerates matplotlib plots, routes architecture diagrams | (called by `review-loop`) |
+| `experiment-proposer` | Designs missing ablations / baselines / robustness tests | (called by `review-loop`) |
+| `review-loop` | Orchestrates everything, manages rollback, emits final summary | `/review-loop paper.tex` |
+| `paper-illustration` | AI-generated architecture / pipeline diagrams | (called by `figure-advisor`) |
+| `research-lit` | Fetches real citations for related-work expansion | (called by `writing-reviser`) |
 
-- **3 parallel agents**: motivation & novelty · experiments · writing & figures
-- **Area Chair**: aggregates scores, gives final decision, ranks revision priorities
-- **Output**: `review_output.md` with per-dimension scores and prioritized action list
+## Inputs
 
-```
-/paper-reviewer paper/main.tex
-```
+Put your paper in the project root (or any path you'll pass as an argument):
 
----
+- **`.pdf`** — submitted PDF
+- **`.tex`** — LaTeX source (preferred — only `.tex` can be auto-revised)
+- **`.zip`** — full LaTeX bundle (figures, bib, style files)
 
-### `/writing-reviser` — Automated text revision
-Reads `review_output.md` and applies safe revisions directly to the `.tex` source.
+You also need:
 
-- Rewrites unclear passages, expands related work, fixes structure
-- **Never fabricates** results or citations — calls `/research-lit` for real references
-- Flags items that need new experiments as `NEEDS_AUTHOR` in-file comments
-- Routes figure issues to `figure_todo.md`, experiment gaps to `author_todo.md`
-- **Output**: `paper/main_revised.tex` · `writing_report.md` · `figure_todo.md` · `author_todo.md`
+- `paper/` folder containing the source file(s), or
+- a direct path passed via the slash command.
 
-```
-/writing-reviser
-```
+If only the PDF is available, the reviewer will still score and comment, but `review-loop` cannot apply text edits (no `.tex` to edit).
 
----
+## How to use
 
-### `/figure-advisor` — Figure analysis and improvement
-Reads `figure_todo.md` and improves each figure.
-
-- Rasterizes PDF pages and visually inspects every figure
-- Generates new `matplotlib` code for data-driven plots (training curves, bar charts, heatmaps)
-- Routes architecture diagrams to `/paper-illustration`
-- **Output**: `figure_report.md` · `figures/fig_N_revised.py`
+### 1. Just get reviewer feedback (read-only)
 
 ```
-/figure-advisor
+/paper-reviewer paper/main.pdf
 ```
 
----
+Produces `review_output.md` containing per-agent scores, AC decision, and a prioritized revision list.
 
-### `/paper-illustration` — AI-generated architecture diagrams
-Generates publication-quality diagrams using a multi-stage Gemini pipeline. Requires `GEMINI_API_KEY`.
-
-- Claude plans the figure → Gemini optimizes layout → Gemini verifies CVPR/NeurIPS style → Gemini renders → Claude strictly reviews (target score ≥ 9/10)
-- Up to 5 refinement iterations
-- **Output**: `figures/ai_generated/figure_final.png` · `latex_include.tex`
-
-```bash
-export GEMINI_API_KEY="your-key"
-/paper-illustration "encoder-decoder architecture with cross-attention fusion"
-```
-
----
-
-### `/experiment-proposer` — Missing experiment designs
-Reads `author_todo.md` and proposes concrete experiment designs that are consistent with your existing methodology.
-
-- Classifies each gap as ablation / new baseline / robustness / analysis
-- Outputs a table template with blank values for the author to fill
-- **Never invents expected results**
-- **Output**: `experiment_proposals.md`
+### 2. Full review + revision loop
 
 ```
-/experiment-proposer
+/review-loop paper/main.tex
 ```
 
----
+This runs review → revise → re-review until either:
+- overall score ≥ `SCORE_THRESHOLD` (default **7**), or
+- `MAX_ROUNDS` reached (default **3**), or
+- two consecutive rollbacks occur.
 
-### `/research-lit` — Literature search
-Finds and synthesizes related work from arXiv, Zotero, local PDFs, Semantic Scholar, and more.
+### 3. Use external reviewer comments
 
-- Searches multiple sources in priority order; degrades gracefully when sources are unavailable
-- Returns a structured literature table + narrative synthesis
-- Used automatically by `/writing-reviser` when expanding related work
-
-```
-/research-lit "multimodal reasoning with chain-of-thought"
-```
-
----
-
-### `/review-loop` — Full revision loop (recommended entry point)
-Orchestrates the complete review → revise → re-review cycle.
-
-- Runs up to **3 rounds**, stops when overall score ≥ **7 / 10**
-- Supports two entry points:
-  - **Auto** (default): runs `/paper-reviewer` from scratch
-  - **External reviews**: place reviewer comments in `external_reviews.txt` to skip the first review round
-- **Rollback protection**: if a revision lowers the score, the previous version is restored automatically
-- **Output**: `LOOP_SUMMARY.md` with score trajectory · `paper/snapshots/` with every round saved
+Drop your reviewer comments into `external_reviews.txt` at the project root, then:
 
 ```
-/review-loop                        # auto entry
-/review-loop external_reviews.txt   # external reviews entry
+/review-loop paper/main.tex
 ```
 
----
+The loop will skip its own reviewer for the first round and use your comments instead, but will still run `paper-reviewer` after each revision to track progress.
 
-## Typical Workflow
+## Outputs
 
-```
-/review-loop
-     │
-     ├── /paper-reviewer        → review_output.md
-     ├── /writing-reviser       → main_revised.tex, figure_todo.md, author_todo.md
-     ├── /figure-advisor        → figure_report.md, fig_N_revised.py
-     └── /experiment-proposer   → experiment_proposals.md
-          │
-          └── repeat until score ≥ 7 or 3 rounds done → LOOP_SUMMARY.md
-```
+After `review-loop` finishes, your working directory contains exactly three files:
 
-After the loop, check:
-- `author_todo.md` — items that require your own experimental runs
-- `experiment_proposals.md` — suggested designs for missing ablations / baselines
-- `figure_report.md` — per-figure improvement notes and new plot scripts
+| File | What's in it |
+|---|---|
+| `REVIEW.md` | Overall score, decision, per-reviewer highlights, score trajectory across rounds, remaining revision priorities, items still needing author action, proposed experiments |
+| `CHANGES.md` | Every text edit (before → after with section/line) and every figure change the agent made |
+| `paper/main_revised.tex` | The revised paper, latest accepted version |
 
----
-
-## File Layout
+Everything else lands under `.auto-review/` for forensics:
 
 ```
-paper-polish/
-├── paper/
-│   ├── main.tex              ← your paper goes here
-│   ├── main_revised.tex      ← latest revision
-│   └── snapshots/            ← per-round backups
-├── review_output.md          ← latest review
-├── writing_report.md         ← revision change log
-├── figure_todo.md            ← figure issues for /figure-advisor
-├── author_todo.md            ← items needing author action
-├── experiment_proposals.md   ← proposed experiment designs
-├── LOOP_SUMMARY.md           ← revision loop final report
-└── figures/
-    ├── ai_generated/         ← /paper-illustration output
-    └── fig_N_revised.py      ← /figure-advisor plot scripts
+.auto-review/
+├── review_output.md           # last round's raw reviewer output
+├── writing_report.md          # text-change log (merged into CHANGES.md)
+├── figure_report.md           # figure-change log (merged into CHANGES.md)
+├── figure_todo.md             # pipe: writing-reviser → figure-advisor
+├── author_todo.md             # items the loop couldn't auto-fix
+├── experiment_proposals.md    # full experiment designs (summarised in REVIEW.md)
+├── loop_state.json            # last round's score / decision / rollback state
+└── snapshots/                 # per-round main.tex + review.md + _FAILED.tex
 ```
 
----
+## How reviews are produced
 
-## In Progress
+`paper-reviewer` launches four agents:
 
-- **`/paper-write`** — draft new sections (related work, intro) from an outline + literature
-- **Zotero / Obsidian sync** — `/research-lit` already supports these; deeper integration coming
-- **Semantic diff view** — side-by-side before/after for every writing revision
-- **Multi-paper support** — run the loop across a folder of papers in batch mode
-- **Score history chart** — auto-generate a matplotlib score trajectory after each loop
+1. **Motivation Reviewer** — novelty (1–10) + logical completeness (1–10)
+2. **Experiment Reviewer** — completeness (1–10) + support for claims (1–10)
+3. **Writing Reviewer** — writing quality (1–10) + figures/tables (1–10)
+4. **Area Chair** — aggregates the three, emits overall score + Accept / Weak Accept / Borderline / Reject + revision priorities
 
----
+Reviewers 1–3 run in parallel, AC runs after they all return. Each reviewer is forced to give a numeric score, a 2–3 sentence justification, and specific weaknesses with locations (section / figure / table).
+
+## How revisions are produced
+
+Inside each loop iteration, the orchestrator runs three revision skills:
+
+- **writing-reviser** classifies each revision priority as **SAFE** (auto-fix), **MARK** (flag for author with a `% [NEEDS_AUTHOR]` LaTeX comment), or **SKIP** (route to figure-advisor / experiment-proposer). SAFE items are edited directly in `main.tex` with `% [REV-NNN]` tags.
+- **figure-advisor** reads `figure_todo.md`, rasterizes the PDF, regenerates matplotlib plots for data-driven figures (using **only** numbers already in the paper), and routes architecture diagrams to `paper-illustration`.
+- **experiment-proposer** reads `author_todo.md` and writes structured proposals (type, dataset, metric, baseline, expected table format) — designs only, never invented results.
+
+## Rollback
+
+If round N scores lower than round N-1:
+
+1. The failed revision is renamed `.auto-review/snapshots/main_round_N_FAILED.tex`.
+2. `paper/main.tex` is restored from the previous snapshot.
+3. The reviser retries with the failed diff + low review as extra context, instructed to be more conservative.
+4. Two consecutive rollbacks halt the loop — manual intervention is needed.
+
+This prevents "revision degradation" where well-meaning edits break coherence faster than they fix issues.
+
+## Anti-hallucination constraints
+
+These are hard-coded into the skills' system prompts:
+
+- **No invented experiment results.** If a fix requires new numbers, the item is marked `NEEDS_AUTHOR` and routed to `author_todo.md`.
+- **No hallucinated citations.** New references must come from `research-lit` (real-paper search) or be left as `\cite{PLACEHOLDER_REV_NNN}` for author verification.
+- **No fabricated plot data.** `figure-advisor` may only re-render with numbers already present in the paper.
+- **No code generation in `experiment-proposer`.** It outputs designs, not implementations.
+
+## Configuration
+
+Constants live at the top of `.claude/skills/review-loop/SKILL.md`:
+
+```
+MAX_ROUNDS = 3
+SCORE_THRESHOLD = 7
+```
+
+Edit them there. There's no separate config file.
+
+## Project layout
+
+```
+paper-auto-review/
+├── .claude/skills/             # the 7 skills
+│   ├── paper-reviewer/
+│   ├── writing-reviser/
+│   ├── figure-advisor/
+│   ├── experiment-proposer/
+│   ├── review-loop/
+│   ├── paper-illustration/
+│   └── research-lit/
+├── paper/                      # put your .tex / .pdf here
+│   └── main.tex
+└── (after running review-loop)
+    ├── REVIEW.md
+    ├── CHANGES.md
+    ├── paper/main_revised.tex
+    └── .auto-review/
+```
 
 ## Requirements
 
-| Skill | Extra requirement |
-|-------|------------------|
-| All skills | Claude Code CLI |
-| `/paper-illustration` | `GEMINI_API_KEY` (Google AI Studio) |
-| `/research-lit` (Zotero) | Zotero MCP server configured |
-| PDF extraction | `pymupdf` (`pip install pymupdf`) |
+- Claude Code CLI
+- `python3` with `PyMuPDF` (`fitz`) for PDF rasterization and text extraction
+- LaTeX toolchain if you want to compile the revised `.tex`
