@@ -15,6 +15,54 @@ Given an academic CS/AI paper, it:
 3. Loops review → revise → re-review until the overall score crosses a threshold or rounds run out, with automatic rollback if a revision lowers the score.
 4. Emits **three** clean files at the end. All intermediate artifacts are tucked into a hidden `.auto-review/` folder.
 
+## Pipeline at a glance
+
+```
+                    paper.tex / .pdf
+                           │
+                           ▼
+            ┌─────────────────────────────┐
+            │       /review-loop          │ ◄─────────────┐
+            │       orchestrator          │               │
+            └──────────────┬──────────────┘               │
+                           │                              │
+   ① REVIEW phase ─────────┴────── (parallel agents)      │
+                                                          │
+   ┌────────────┐    ┌────────────┐    ┌────────────┐     │
+   │ Motivation │    │ Experiment │    │  Writing   │     │
+   │  Reviewer  │    │  Reviewer  │    │  Reviewer  │     │
+   └─────┬──────┘    └─────┬──────┘    └─────┬──────┘     │
+         └─────────────────┼─────────────────┘            │
+                           ▼                              │
+                   ┌───────────────┐                      │
+                   │  Area Chair   │  ← aggregate scores  │
+                   │  (sequential) │                      │
+                   └───────┬───────┘                      │
+                           │                              │
+   ② REVISE phase ─────────┴────── (parallel skills)      │
+                                                          │
+   ┌────────────┐    ┌────────────┐    ┌──────────────┐   │
+   │  writing-  │    │  figure-   │    │ experiment-  │   │
+   │  reviser   │    │  advisor   │    │  proposer    │   │
+   └─────┬──────┘    └─────┬──────┘    └──────┬───────┘   │
+    text edits        redraw figs       expt designs      │
+         └─────────────────┼─────────────────┘            │
+                           ▼                              │
+              ┌────────────────────────────┐              │
+              │ score ≥ 7  or  rounds = 3? │── no ────────┘
+              │ (rollback if score drops)  │   next round
+              └─────────────┬──────────────┘
+                            │ yes
+                            ▼
+              ┌────────────────────────────┐
+              │  REVIEW.md                 │
+              │  CHANGES.md                │
+              │  paper/main_revised.tex    │
+              └────────────────────────────┘
+```
+
+Both phases are **fan-out parallel**: the three reviewers run concurrently, the three revision skills run concurrently. The Area Chair fires only after all three reviewers return (it needs to aggregate). `/review-loop` wraps the whole thing into a multi-round loop with rollback.
+
 ## Skills
 
 | Skill | Role | Invocation |
